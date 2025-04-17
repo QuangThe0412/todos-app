@@ -9,8 +9,9 @@ import {
 import useTaskStore from "../store/taskModalStore";
 import ModalTask from "../components/ModalTask";
 import { toast } from "react-toastify";
-import useAuthStore from "../store/authStore";
 import { changeRoleEndpoint } from "../http/authEndpoint";
+import eventEmitter from "../utils/eventEmitter";
+import socket from "../websocket/websocketClient";
 
 export const statuses = ["TODO", "INPROGRESS", "COMPLETED"] as const;
 
@@ -26,11 +27,64 @@ export interface TaskType {
 const TaskManagerPage: React.FC = () => {
   const [tasks, setTasks] = useState<TaskType[]>([]);
   const { setIsModalOpen } = useTaskStore();
-  const [searchQuery, setSearchQuery] = useState(""); // State cho thanh tìm kiếm
+  const [searchQuery, setSearchQuery] = useState("");
   const userInfo =
     localStorage.getItem("user") !== null
       ? JSON.parse(localStorage.getItem("user")!)
       : null;
+
+  useEffect(() => {
+    socket.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      eventEmitter.emit(message.type, message);
+    };
+  }, []);
+
+  useEffect(() => {
+    eventEmitter.on("TASK_CREATED", (message) => {
+      const { task } = message;
+      const _task: TaskType = {
+        id: task.Id,
+        title: task.Title,
+        description: task.Description,
+        status: task.Status,
+        dueDate: task.DueDate,
+        statusString: statuses[task.Status],
+      };
+
+      setTasks((prevTasks) => [...prevTasks, _task]);
+    });
+
+    eventEmitter.on("TASK_UPDATED", (message) => {
+      const { task: newTask } = message;
+      const _task: TaskType = {
+        id: newTask.Id,
+        title: newTask.Title,
+        description: newTask.Description,
+        status: newTask.Status,
+        dueDate: newTask.DueDate,
+        statusString: statuses[newTask.Status],
+      };
+
+      setTasks((prevTasks) =>
+        prevTasks.map((task) =>
+          task.id === _task.id ? { ...task, ..._task } : task
+        )
+      );
+    });
+
+    eventEmitter.on("TASK_DELETED", (message) => {
+      setTasks((prevTasks) =>
+        prevTasks.filter((task) => task.id !== message.taskId)
+      );
+    });
+
+    return () => {
+      eventEmitter.removeAllListeners("TASK_CREATED");
+      eventEmitter.removeAllListeners("TASK_UPDATED");
+      eventEmitter.removeAllListeners("TASK_DELETED");
+    };
+  }, []);
 
   useEffect(() => {
     fetchTasksEndpoint().then((data) => {
@@ -79,22 +133,22 @@ const TaskManagerPage: React.FC = () => {
 
   // Lọc danh sách công việc dựa trên searchQuery
   const filteredTasks = tasks.filter((task) =>
-    task.title.toLowerCase().includes(searchQuery.toLowerCase())
+    task?.title?.toLowerCase()?.includes(searchQuery.toLowerCase())
   );
 
   const handleSubmitTask = (task: TaskType) => {
     //check if task exists in tasks
-    const existingTask = tasks.find((t) => t.id === task.id);
-    if (existingTask) {
-      // Update existing task
-      const updatedTasks = tasks.map((t) =>
-        t.id === task.id ? { ...t, ...task } : t
-      );
-      setTasks(updatedTasks);
-    } else {
-      // Add new task
-      setTasks((prevTasks) => [...prevTasks, task]);
-    }
+    // const existingTask = tasks.find((t) => t.id === task.id);
+    // if (existingTask) {
+    //   // Update existing task
+    //   const updatedTasks = tasks.map((t) =>
+    //     t.id === task.id ? { ...t, ...task } : t
+    //   );
+    //   setTasks(updatedTasks);
+    // } else {
+    //   // Add new task
+    //   setTasks((prevTasks) => [...prevTasks, task]);
+    // }
   };
 
   const handleDeleteTask = (taskId: string) => {
